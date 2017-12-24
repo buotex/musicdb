@@ -1,63 +1,57 @@
 import os
 import sqlite3
-import contextlib
 import psycopg2
+from psycopg2 import sql
 
 # Connect to an existing database
 #conn = psycopg2.connect("dbname=test user=postgres")
 
-def remake_db(db_file):
+def remake_db():
 
     #with contextlib.closing(sqlite3.connect(db_file)) as con:
-    with contextlib.closing(psycopg2.connect("dbname=musicdb user=bxu")) as con:
+    with psycopg2.connect("dbname=musicdb user=bxu") as con:
 
         with con: # auto-commits
-                with contextlib.closing(con.cursor()) as cur:
+                with con.cursor() as cur:
 
+                    cur.execute('''DROP VIEW IF EXISTS composition_composer_view''')
+                    cur.execute('''DROP TABLE IF EXISTS composition_composer''')
+                    cur.execute('''DROP TABLE IF EXISTS composition_concordance_entry''')
                     cur.execute('''DROP TABLE IF EXISTS composer''')
                     cur.execute('''DROP TABLE IF EXISTS composition''')
-                    cur.execute('''DROP TABLE IF EXISTS composition_composer''')
                     cur.execute('''DROP TABLE IF EXISTS concordance''')
-                    cur.execute('''DROP TABLE IF EXISTS composition_concordance''')
-                    cur.execute('''DROP VIEW IF EXISTS composition_composer_view''')
-                    cur.execute('''DROP VIEW IF EXISTS concordance_production''')
 
 
-                    cur.execute('''CREATE TABLE IF NOT EXISTS composer(name string, birth date, death date)''')
-                    cur.execute('''CREATE TABLE IF NOT EXISTS composition(track_no integer, 
-                                                                    title string,
-                                                                    remark string,
-                                                                    mode integer,
-                                                                    printed_in string,  
-                                                                    genre string,
-                                                                    scribe string
+
+                    cur.execute('''CREATE TABLE IF NOT EXISTS composer(id SERIAL PRIMARY KEY, name text)''')
+                    cur.execute('''CREATE TABLE IF NOT EXISTS composition(id SERIAL PRIMARY KEY, 
+                                                                    track_no text, 
+                                                                    title text,
+                                                                    remark text,
+                                                                    mode text,
+                                                                    printed_in text,  
+                                                                    genre text,
+                                                                    scribe text
                                                                         )''')
-                    cur.execute('''CREATE TABLE IF NOT EXISTS composition_composer(composition integer references composition(ROWID),
-                                                                                composer_src integer references composer(ROWID), 
-                                                                                composer_rism integer references composer(ROWID), 
-                                                                                composer_chr integer references composer(ROWID)
+                    cur.execute('''CREATE TABLE IF NOT EXISTS composition_composer(composition integer references composition,
+                                                                                composer_src integer references composer, 
+                                                                                composer_rism integer references composer, 
+                                                                                composer_chr integer references composer
                                                                                 )''')
 
-                    cur.execute('''CREATE TABLE IF NOT EXISTS concordance ( shorthand string)''')
-                    cur.execute('''CREATE TABLE IF NOT EXISTS composition_concordance( composition integer references composition(ROWID),
-                                                                                  concordance_man integer references concordance(ROWID),
-                                                                                  concordance_print integer references concordance(ROWID),
-                                                                                  concordance_chr integer references concordance(ROWID)
+                    cur.execute('''CREATE TABLE IF NOT EXISTS concordance (id SERIAL PRIMARY KEY, shorthand text)''')
+                    cur.execute('''CREATE TABLE IF NOT EXISTS composition_concordance_entry( concordance_id integer references concordance,
+                                                                                  composition_id integer references composition,
+                                                                                  concordance_index integer CHECK (concordance_index BETWEEN 0 AND 2 )
                                                                                     )''')
                     cur.execute('''CREATE VIEW composition_composer_view as
-                    SELECT c1.name, c2.name, c3.name, c.track_no, c.title, c.remark from
-                    composition c join composition_composer cc on c.ROWID == cc.composition
-                    LEFT JOIN composer c1 on cc.composer_src == c1.ROWID
-                    LEFT JOIN composer c2 on cc.composer_rism == c2.ROWID
-                    LEFT JOIN composer c3 on cc.composer_chr == c3.ROWID
+                    SELECT c1.name as composer_src, c2.name as composer_rism, c3.name as composer_chr, c.track_no, c.title, c.remark from
+                    composition c join composition_composer cc on c.id = cc.composition
+                    LEFT JOIN composer c1 on cc.composer_src = c1.id
+                    LEFT JOIN composer c2 on cc.composer_rism = c2.id
+                    LEFT JOIN composer c3 on cc.composer_chr = c3.id
                     ;
                     ''')
-                    cur.execute('''CREATE VIEW concordance_production as 
-                    SELECT con.shorthand, composition.title from composition natural join composition_concordance 
-                    , concordance where composition_concordance_man == concordance.ROWID OR
-                                        composition_concordance_print == concordance.ROWID OR
-                                        composition_concordance_chr == concordance.ROWID
-                                        ''')
 
 
 def getId(conn, table, col, name):
@@ -65,13 +59,12 @@ def getId(conn, table, col, name):
     # sanitize
     if name == "":
         return None
-    with contextlib.closing(conn.cursor()) as cursor:
-        cursor.execute("SELECT ROWID from {} where {} == ?".format(table, col), (name,))
+    with conn.cursor() as cursor:
+        cursor.execute(sql.SQL("SELECT id from {} where {} = %s").format(sql.Identifier(table), sql.Identifier(col)), (name,))
         id = cursor.fetchone()
         if not id:
-            #print("INSERTING {}".format(name))
-            cursor.execute("INSERT INTO {} ({}) VALUES(?)".format(table, col), (name,))
-            id = cursor.lastrowid
+            cursor.execute(sql.SQL("INSERT INTO {} ({}) VALUES(%s) RETURNING ID").format(sql.Identifier(table), sql.Identifier(col)), (name,))
+            id = cursor.fetchone()[0]
         else:
             id = id[0]
     return id
@@ -80,22 +73,21 @@ def getId(conn, table, col, name):
 
 def insert_song(conn, track_no, title, remark, mode, printed_in, genre, scribe):
     id = None
-    with contextlib.closing(conn.cursor()) as cursor:
-        cursor.execute("INSERT INTO composition VALUES(?,?,?,?,?,?,?)",
+    with conn.cursor() as cursor:
+        cursor.execute("INSERT INTO composition ({}) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING ID".
+                       format("track_no, title, remark, mode, printed_in, genre, scribe"),
                        (track_no, title, remark, mode, printed_in, genre, scribe))
-        id = cursor.lastrowid
+        id = cursor.fetchone()[0]
     return id
 
 
 def insert_song_composers(conn, composition_id, comp_src_id, comp_rism_id, comp_chr_id):
     id = None
     #print(composition_id, comp_src_id, comp_rism_id, comp_chr_id)
-    with contextlib.closing(conn.cursor()) as cursor:
-        cursor.execute("INSERT INTO composition_composer VALUES(?,?,?,?)",
+    with conn.cursor() as cursor:
+        cursor.execute("INSERT INTO composition_composer ({}) VALUES(%s,%s,%s,%s)".
+                       format("composition, composer_src, composer_rism, composer_chr"),
                        (composition_id, comp_src_id, comp_rism_id, comp_chr_id))
-        id = cursor.lastrowid
-    return id
-
 
 def entry_is_sane(entry):
     [composer_src, composer_rism, composer_chr, track_no, title, remark, mode, printed_in, genre, scribe, cond_man,
@@ -105,7 +97,7 @@ def entry_is_sane(entry):
     return False
 
 
-def parse_data(input_file: object, db_file: object) -> object:
+def parse_data(input_file: object) -> object:
     columns = ["composer_src", "composer_rism", "composer_chr", "track_no", "title", "remark", "mode", "printed_in",
                "genre", "scribe", "cond_man", "cond_print", "cond_chr"]
 
@@ -133,16 +125,16 @@ def parse_data(input_file: object, db_file: object) -> object:
         elif len(entry) > len(columns):
             raise RuntimeError("text too long")
 
-    with contextlib.closing(sqlite3.connect(db_file)) as conn:
-        with conn:  # auto-commits
+    with psycopg2.connect("dbname=musicdb user=bxu") as con:
+        with con:  # auto-commits
             for entry in entries:
                 [composer_src, composer_rism, composer_chr,
                  track_no, title, remark, mode, printed_in, genre, scribe, cond_man, cond_print, cond_chr] = entry
-                comp_src_id = getId(conn, "composer", "name", composer_src)
+                comp_src_id = getId(con, "composer", "name", composer_src)
                 # print(comp_src_id)
-                comp_rism_id = getId(conn, "composer", "name", composer_rism)
+                comp_rism_id = getId(con, "composer", "name", composer_rism)
                 # print(comp_rism_id)
-                comp_chr_id = getId(conn, "composer", "name", composer_chr)
+                comp_chr_id = getId(con, "composer", "name", composer_chr)
                 # print(comp_chr_id)
-                composition_id = insert_song(conn, track_no, title, remark, mode, printed_in, genre, scribe)
-                insert_song_composers(conn, composition_id, comp_src_id, comp_rism_id, comp_chr_id)
+                composition_id = insert_song(con, track_no, title, remark, mode, printed_in, genre, scribe)
+                insert_song_composers(con, composition_id, comp_src_id, comp_rism_id, comp_chr_id)
