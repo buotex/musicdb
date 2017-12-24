@@ -1,12 +1,17 @@
 import os
 import sqlite3
 import contextlib
+import psycopg2
 
+# Connect to an existing database
+#conn = psycopg2.connect("dbname=test user=postgres")
 
 def remake_db(db_file):
 
-    with contextlib.closing(sqlite3.connect(db_file)) as con:
-            with con: # auto-commits
+    #with contextlib.closing(sqlite3.connect(db_file)) as con:
+    with contextlib.closing(psycopg2.connect("dbname=musicdb user=bxu")) as con:
+
+        with con: # auto-commits
                 with contextlib.closing(con.cursor()) as cur:
 
                     cur.execute('''DROP TABLE IF EXISTS composer''')
