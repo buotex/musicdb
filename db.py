@@ -42,7 +42,7 @@ def remake_db():
                                                                                 composer_chr integer references composer
                                                                                 )''')
 
-                    cur.execute('''CREATE TABLE IF NOT EXISTS concordance (id SERIAL PRIMARY KEY, shorthand text)''')
+                    cur.execute('''CREATE TABLE IF NOT EXISTS concordance (id SERIAL PRIMARY KEY, shorthand text, latitude float, longitude float)''')
                     cur.execute('''CREATE TABLE IF NOT EXISTS composition_concordance_entry( concordance_id integer references concordance,
                                                                                   composition_id integer references composition,
                                                                                   concordance_index integer CHECK (concordance_index BETWEEN 0 AND 2 )
