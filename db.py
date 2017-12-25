@@ -88,11 +88,16 @@ def remake_db():
                     cur.execute('''CREATE VIEW all_view as
                                   SELECT composer_src, composer_rism, composer_chr,
                                   track_no, title, remark, mode, printed_in, genre, scribe, 
-                                  concomv.concordance_man, concomv.concordance_print, concomv.concordance_chr
+                                  concomv.concordance_man, concomv.concordance_print, concomv.concordance_chr, concordance.latitude, concordance.longitude
                                   FROM
-                                  concordance_composition_view concomv join composition_composer_view comcomv 
+                                  concordance_composition_view concomv join composition_composer_view comcomv
                                   ON 
                                   concomv.composition_id = comcomv.composition_id 
+                                  , concordance
+                                  WHERE 
+                                  concomv.concordance_man = concordance.shorthand 
+                                  or concomv.concordance_print = concordance.shorthand 
+                                  or concomv.concordance_chr = concordance.shorthand
                                   ;
                                   ''')
 
