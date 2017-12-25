@@ -42,8 +42,9 @@ def remake_db():
                                                                                 composer_chr integer references composer
                                                                                 )''')
 
-                    cur.execute('''CREATE TABLE IF NOT EXISTS concordance (id SERIAL PRIMARY KEY, shorthand text, latitude float, longitude float)''')
-                    cur.execute('''CREATE TABLE IF NOT EXISTS composition_concordance_entry( concordance_id integer references concordance,
+                    cur.execute('''CREATE TABLE IF NOT EXISTS concordance (shorthand text PRIMARY KEY, latitude float, longitude float)''')
+
+                    cur.execute('''CREATE TABLE IF NOT EXISTS composition_concordance_entry( concordance_shorthand text references concordance,
                                                                                   composition_id integer references composition,
                                                                                   concordance_index integer CHECK (concordance_index BETWEEN 0 AND 2 )
                                                                                     )''')
@@ -59,13 +60,19 @@ def remake_db():
 
                     cur.execute('''CREATE VIEW concordance_composition_view as
                                 SELECT concordance.shorthand as concordance_man, NULL as concordance_print, NULL as concordance_chr, composition_id
-                                from composition_concordance_entry as cce join composition on cce.composition_id = composition.id join concordance on cce.concordance_id = concordance.id where cce.concordance_index=0
+                                from composition_concordance_entry as cce join composition on cce.composition_id = composition.id join concordance on cce.concordance_shorthand = concordance.shorthand where cce.concordance_index=0
                                 UNION
                                 SELECT NULL as concordance_man, concordance.shorthand as concordance_print, NULL as concordance_chr, composition_id
-                                from composition_concordance_entry as cce join composition on cce.composition_id = composition.id join concordance on cce.concordance_id = concordance.id where cce.concordance_index=1
+                                from composition_concordance_entry as cce join composition on cce.composition_id = composition.id join 
+                                concordance on cce.concordance_shorthand = concordance.shorthand where cce.concordance_index=1
                                 UNION
                                 SELECT NULL as concordance_man, NULL as concordance_print, concordance.shorthand as concordance_chr, composition_id
-                                from composition_concordance_entry as cce join composition on cce.composition_id = composition.id join concordance on cce.concordance_id = concordance.id where cce.concordance_index=2
+                                from composition_concordance_entry as cce join composition on cce.composition_id = composition.id join 
+                                concordance on cce.concordance_shorthand = concordance.shorthand where cce.concordance_index=2
+                                UNION
+                                SELECT NULL as concordance_man, NULL as concordance_print, NULL as concordance_chr, composition.id
+                                from composition
+                                where composition.id not in (select composition_id from composition_concordance_entry)
                                 ;
                                 ''')
                     cur.execute('''CREATE VIEW concordance_composition_joined_view as
@@ -142,10 +149,10 @@ def insert_composition_concordance(conn, composition_id, cond_man, cond_print, c
             for cond in cond_list.split(','):
                 if cond == "":
                     continue
-                cond_id = getId(conn, "concordance", "shorthand", cond.strip())
+                cursor.execute("INSERT INTO concordance (shorthand) VALUES(%s) ON CONFLICT DO NOTHING", (cond.strip(),))
                 cursor.execute("INSERT INTO composition_concordance_entry ({}) VALUES(%s,%s,%s)".
-                               format("concordance_id, composition_id, concordance_index"),
-                               (cond_id, composition_id, index))
+                               format("concordance_shorthand, composition_id, concordance_index"),
+                               (cond.strip(), composition_id, index))
 
 
 
@@ -186,17 +193,31 @@ def parse_data(input_file: object) -> object:
         elif len(entry) > len(columns):
             raise RuntimeError("text too long")
 
-    with psycopg2.connect("dbname=musicdb user=bxu") as con:
-        with con:  # auto-commits
+    with psycopg2.connect("dbname=musicdb user=bxu") as conn:
+        with conn:  # auto-commits
             for entry in entries:
                 [composer_src, composer_rism, composer_chr,
                  track_no, title, remark, mode, printed_in, genre, scribe, cond_man, cond_print, cond_chr] = entry
-                comp_src_id = getId(con, "composer", "name", composer_src)
+                comp_src_id = getId(conn, "composer", "name", composer_src)
                 # print(comp_src_id)
-                comp_rism_id = getId(con, "composer", "name", composer_rism)
+                comp_rism_id = getId(conn, "composer", "name", composer_rism)
                 # print(comp_rism_id)
-                comp_chr_id = getId(con, "composer", "name", composer_chr)
+                comp_chr_id = getId(conn, "composer", "name", composer_chr)
                 # print(comp_chr_id)
-                composition_id = insert_song(con, track_no, title, remark, mode, printed_in, genre, scribe)
-                insert_song_composers(con, composition_id, comp_src_id, comp_rism_id, comp_chr_id)
-                insert_composition_concordance(con, composition_id, cond_man, cond_print, cond_chr)
+                composition_id = insert_song(conn, track_no, title, remark, mode, printed_in, genre, scribe)
+                insert_song_composers(conn, composition_id, comp_src_id, comp_rism_id, comp_chr_id)
+                insert_composition_concordance(conn, composition_id, cond_man, cond_print, cond_chr)
+
+
+def add_positions(input_file):
+    with open(input_file, encoding='utf-8') as f:
+        input_lines = f.readlines()
+
+    with psycopg2.connect("dbname=musicdb user=bxu") as conn:
+        with conn:  # auto-commits
+            with conn.cursor() as cursor:
+                for line in input_lines[:]:
+                    shorthand, latitude, longitude = line.split(",")
+                    cursor.execute("UPDATE concordance set latitude=%s, longitude=%s where shorthand=%s", (latitude, longitude,shorthand))
+
+
