@@ -15,6 +15,7 @@ def remake_db():
                     cur.execute('''DROP MATERIALIZED VIEW IF EXISTS all_joined_view''')
                     cur.execute('''DROP MATERIALIZED VIEW IF EXISTS all_view''')
                     cur.execute('''DROP MATERIALIZED VIEW IF EXISTS concordance_composition_joined_view''')
+                    #cur.execute('''DROP MATERIALIZED VIEW IF EXISTS concordance_composition_name_view''')
                     cur.execute('''DROP MATERIALIZED VIEW IF EXISTS concordance_composition_view''')
                     cur.execute('''DROP MATERIALIZED VIEW IF EXISTS composition_composer_view''')
                     cur.execute('''DROP TABLE IF EXISTS composition_composer''')
@@ -41,7 +42,7 @@ def remake_db():
                                                                                 composer_chr integer references composer
                                                                                 )''')
 
-                    cur.execute('''CREATE TABLE IF NOT EXISTS concordance (id SERIAL PRIMARY KEY, shorthand text, latitude float, longitude float)''')
+                    cur.execute('''CREATE TABLE IF NOT EXISTS concordance (id SERIAL PRIMARY KEY, name text, latitude float, longitude float)''')
 
                     cur.execute('''CREATE TABLE IF NOT EXISTS composition_concordance_entry( concordance_id integer references concordance,
                                                                                   composition_id integer references composition,
@@ -58,31 +59,22 @@ def remake_db():
                     ''')
 
                     cur.execute('''CREATE MATERIALIZED VIEW concordance_composition_view as
-                                SELECT concordance.id as concordanceMan, NULL::INTEGER as concordancePrint, 
-                                NULL::INTEGER as concordanceChr, composition.id as composition_id
-                                FROM 
-                                composition_concordance_entry as cce join composition on cce.composition_id = composition.id join 
-                                concordance on cce.concordance_id = concordance.id where cce.concordance_index=0
-                                UNION
-                                SELECT NULL::INTEGER as concordanceMan, concordance.id as concordancePrint, 
-                                NULL::INTEGER as concordanceChr, composition.id as composition_id
-                                FROM 
-                                composition_concordance_entry as cce join composition on cce.composition_id = composition.id join 
-                                concordance on cce.concordance_id = concordance.id where cce.concordance_index=1
-                                UNION
-                                SELECT NULL::INTEGER as concordanceMan, NULL::INTEGER as concordancePrint, 
-                                concordance.id as concordanceChr, composition.id as composition_id
-                                FROM 
-                                composition_concordance_entry as cce join composition on cce.composition_id = composition.id join 
-                                concordance on cce.concordance_id = concordance.id where cce.concordance_index=2
-                                UNION
-                                SELECT NULL::INTEGER as concordanceMan, NULL::INTEGER as concordancePrint, 
-                                NULL::INTEGER as concordanceChr, composition.id as composition_id
-                                FROM 
-                                composition
-                                where composition.id not in (select composition_id from composition_concordance_entry)
-                                ;
-                                ''')
+                    SELECT CASE 
+                             WHEN cce.concordance_index = 0 THEN cce.concordance_id 
+                             ELSE NULL 
+                           END AS concordanceMan, 
+                           CASE 
+                             WHEN cce.concordance_index = 1 THEN cce.concordance_id 
+                             ELSE NULL 
+                           END AS concordancePrint, 
+                           CASE 
+                             WHEN cce.concordance_index = 2 THEN cce.concordance_id 
+                             ELSE NULL 
+                           END AS concordanceChr, 
+                           composition_id 
+                    FROM   composition_concordance_entry cce; 
+                    ;
+                    ''')
 
 
                     cur.execute('''CREATE MATERIALIZED VIEW all_view as
@@ -91,7 +83,7 @@ def remake_db():
                                   concomv.concordanceMan, concomv.concordancePrint, concomv.concordanceChr, 
                                   concordance.latitude, concordance.longitude
                                   FROM
-                                  concordance_composition_view concomv left join composition_composer_view comcomv
+                                  concordance_composition_view concomv right join composition_composer_view comcomv
                                   ON 
                                   concomv.composition_id = comcomv.composition_id 
                                   LEFT JOIN
@@ -103,22 +95,31 @@ def remake_db():
                                   ;
                                   ''')
 
-                    # cur.execute('''CREATE MATERIALIZED VIEW concordance_composition_joined_view as
-                    #           SELECT
-                    #           string_agg(concordanceMan,', ') as concordanceMan, string_agg(concordancePrint, ', ') as concordancePrint,
-                    #           string_agg(concordanceChr, ', ') as concordanceChr, composition_id from concordance_composition_view group by composition_id
-                    #           ;
-                    #           ''')
-                    # cur.execute('''CREATE MATERIALIZED VIEW all_joined_view as
-                    #                                             SELECT composer_src, composer_rism, composer_chr,
-                    #                                             track_no, title, remark, mode, printed_in, genre, scribe,
-                    #                                             concomv.concordanceMan, concomv.concordancePrint, concomv.concordanceChr
-                    #                                             FROM
-                    #                                             concordance_composition_joined_view concomv join composition_composer_view comcomv
-                    #                                             ON
-                    #                                             concomv.composition_id = comcomv.composition_id
-                    #                                             ;
-                    #                                             ''')
+
+                    cur.execute('''CREATE MATERIALIZED VIEW concordance_composition_joined_view as
+                                SELECT
+                                array_to_string(array_agg(concordance.name) FILTER ( WHERE cce.concordance_index = 0), ', ') as concordanceMan, 
+                                array_to_string(array_agg(concordance.name) FILTER ( WHERE cce.concordance_index = 1), ', ') as concordancePrint, 
+                                array_to_string(array_agg(concordance.name) FILTER ( WHERE cce.concordance_index = 2), ', ') as concordanceChr,
+                                composition_id 
+                                FROM composition_concordance_entry cce
+                                JOIN
+                                concordance
+                                ON
+                                cce.concordance_id = concordance.id
+                                group by composition_id
+                                ;
+                                ''')
+                    cur.execute('''CREATE MATERIALIZED VIEW all_joined_view as
+                                                                 SELECT composer_src, composer_rism, composer_chr,
+                                                                 track_no, title, remark, mode, printed_in, genre, scribe,
+                                                                 concomv.concordanceMan, concomv.concordancePrint, concomv.concordanceChr
+                                                                 FROM
+                                                                 concordance_composition_joined_view concomv right join composition_composer_view comcomv
+                                                                 ON
+                                                                 concomv.composition_id = comcomv.composition_id
+                                                                 ;
+                                                                 ''')
 
 
 def getId(conn, table, col, name):
@@ -166,7 +167,7 @@ def insert_composition_concordance(conn, composition_id, cond_man, cond_print, c
                 if cond == "":
                     continue
 
-                cond_id = getId(conn, "concordance", "shorthand", cond.strip())
+                cond_id = getId(conn, "concordance", "name", cond.strip())
                 cursor.execute("INSERT INTO composition_concordance_entry ({}) VALUES(%s,%s,%s)".
                                format("concordance_id, composition_id, concordance_index"),
                                (cond_id, composition_id, index))
@@ -236,9 +237,10 @@ def cleanup_db():
 def refresh_views():
     VIEW_NAMES = ["composition_composer_view",
                   "concordance_composition_view",
-                  #"concordance_composition_joined_view",
+                  #"concordance_composition_name_view",
+                  "concordance_composition_joined_view",
                   "all_view",
-                  #"all_joined_view"
+                  "all_joined_view"
                   ]
     with psycopg2.connect("dbname=musicdb user=bxu") as conn:
         with conn:  # auto-commits
@@ -256,7 +258,7 @@ def add_positions(input_file):
         with conn:  # auto-commits
             with conn.cursor() as cursor:
                 for line in input_lines[:]:
-                    shorthand, latitude, longitude = line.split(",")
-                    cursor.execute("UPDATE concordance set latitude=%s, longitude=%s where shorthand=%s", (latitude, longitude,shorthand))
+                    name, latitude, longitude = line.split(",")
+                    cursor.execute("UPDATE concordance set latitude=%s, longitude=%s where name=%s", (latitude, longitude,name))
 
 
